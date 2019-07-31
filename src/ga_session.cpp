@@ -1,5 +1,6 @@
 #include <array>
 #include <map>
+#include <functional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -757,6 +758,72 @@ namespace sdk {
         return result;
     }
 
+    void ga_session::push_client_blob_to_server(const std::string& blob, const std::string& hmac, const std::string& previous_hmac)
+    {
+        wamp_call([](wamp_call_result result) { result.get(); },
+            "com.greenaddress.login.set_client_blob", blob, hmac, previous_hmac);
+    }
+
+    nlohmann::json ga_session::get_client_blob_from_server() const
+    {
+        nlohmann::json data;
+        wamp_call([&data](wamp_call_result result) { data = get_json_result(result.get()); },
+            "com.greenaddress.login.get_client_blob");
+        return data;
+    }
+
+    // Apply 'update' function to current client data, update the sequence number and the
+    // hmac and push the encrypted blob to the server
+    // The server call results in a callback via on_new_client_blob which updates the local
+    // client data so it's not done explicitly here
+    nlohmann::json ga_session::update_client_data(json_update_fn_t update)
+    {
+        nlohmann::json client_data = get_client_data();
+        const std::string previous_hmac = get_client_data_hmac(client_data);
+        update(client_data);
+
+        const auto sequence_p = client_data.find("sequence");
+        const int previous_sequence = sequence_p == client_data.end() ? 0 : sequence_p->get<int>();
+        client_data["sequence"] = previous_sequence + 1;
+
+        const std::string hmac = get_client_data_hmac(client_data);
+        const std::string new_blob = encrypt_client_blob(client_data);
+        push_client_blob_to_server(new_blob, hmac, previous_hmac);
+        return client_data;
+    }
+
+    nlohmann::json ga_session::register_asset_local(const nlohmann::json& params)
+    {
+        const auto update = [&params](nlohmann::json& client_data) {
+            client_data["local_assets"].update(params);
+        };
+        const auto client_data = update_client_data(update);
+        return client_data["local_assets"];
+    };
+
+    nlohmann::json ga_session::get_client_data() const
+    {
+        locker_t locker(m_mutex);
+        return m_client_data;
+    }
+
+    void ga_session::set_client_data(locker_t& locker, const nlohmann::json& meta_blob)
+    {
+        GDK_RUNTIME_ASSERT(locker.owns_lock()); // TODO: lock not really needed here?
+
+        const nlohmann::json client_data = decrypt_client_blob(meta_blob["blob"]);
+        GDK_RUNTIME_ASSERT_MSG(verify_client_data(client_data, meta_blob["hmac"]), "Invalid client blob hmac");
+
+        // Ignore blobs that are not newer than the current one
+        // This can happen for example if notifications race
+        if (client_data["sequence"] <= m_client_data["sequence"]) {
+            GDK_LOG_SEV(log_level::info) << "Ignoring stale client blob notification";
+            return;
+        }
+
+        m_client_data = client_data;
+    }
+
     ga_session::nlocktime_t ga_session::get_upcoming_nlocktime() const
     {
         nlohmann::json upcoming;
@@ -992,6 +1059,12 @@ namespace sdk {
         auto& appearance = m_login_data["appearance"];
         cleanup_appearance_settings(locker, appearance);
 
+        const auto client_blob_p = m_login_data.find("client_blob");
+        if (client_blob_p != m_login_data.end()) {
+            const nlohmann::json client_blob = *client_blob_p;
+            set_client_data(locker, *client_blob_p);
+        }
+
         m_earliest_block_time = m_login_data["earliest_key_creation_time"];
 
         // Notify the caller of their settings
@@ -1104,6 +1177,15 @@ namespace sdk {
         return convert_amount(locker, details)["satoshi"] <= current_total;
     }
 
+    void ga_session::notify_client(locker_t& locker, const char* event, const nlohmann::json& details)
+    {
+        // Note: notification recipient must destroy the passed JSON
+        if (m_notification_handler != nullptr) {
+            call_notification_handler(
+                locker, new nlohmann::json({ { "event", event }, { event, std::move(details) } }));
+        }
+    }
+
     void ga_session::on_new_transaction(locker_t& locker, nlohmann::json details)
     {
         no_std_exception_escape([&] {
@@ -1187,8 +1269,7 @@ namespace sdk {
             } else {
                 // TODO: figure out what type is for liquid
             }
-            call_notification_handler(
-                locker, new nlohmann::json({ { "event", "transaction" }, { "transaction", std::move(details) } }));
+            notify_client(locker, "transaction", details);
         });
     }
 
@@ -1204,8 +1285,7 @@ namespace sdk {
             }
             if (m_notification_handler != nullptr) {
                 details.erase("diverged_count");
-                call_notification_handler(
-                    locker, new nlohmann::json({ { "event", "block" }, { "block", std::move(details) } }));
+                notify_client(locker, "block", details);
             }
 
             // Erase all cached tx lists
@@ -1219,12 +1299,71 @@ namespace sdk {
         no_std_exception_escape([&] {
             GDK_RUNTIME_ASSERT(locker.owns_lock());
             auto new_estimates = set_fee_estimates(locker, details);
+            notify_client(locker, "fees", new_estimates);
+        });
+    }
 
-            // Note: notification recipient must destroy the passed JSON
-            if (m_notification_handler != nullptr) {
-                call_notification_handler(
-                    locker, new nlohmann::json({ { "event", "fees" }, { "fees", new_estimates } }));
+    std::string ga_session::encrypt_client_blob(const nlohmann::json& plaintext)
+    {
+        if (plaintext.empty()) {
+            return {};
+        }
+
+        const std::string json = plaintext.dump();
+        return base64encode(reinterpret_cast<const unsigned char*>(json.data()), json.size());
+    }
+
+    nlohmann::json ga_session::decrypt_client_blob(const std::string& ciphertext)
+    {
+        if (ciphertext.empty()) {
+            return {};
+        }
+
+        const std::vector<unsigned char> bytes = base64decode(ciphertext);
+        const std::string json(std::begin(bytes), std::end(bytes));
+        return nlohmann::json::parse(json);
+    }
+
+    std::string ga_session::get_client_data_hmac(const nlohmann::json& client_data)
+    {
+        if (client_data.is_null()) {
+            return {};
+        }
+
+        const char* fixed_key = "FIXME use a key derived from mnemonic";
+        const std::string data = client_data.dump();
+        const auto hmac_bytes = hmac_sha256(
+            byte_span_t(reinterpret_cast<const unsigned char*>(fixed_key), sizeof(fixed_key)),
+            byte_span_t(reinterpret_cast<const unsigned char*>(data.data()), data.length()));
+        const auto hmac = base64encode(hmac_bytes.data(), hmac_bytes.size());
+        return hmac;
+    }
+
+    bool ga_session::verify_client_data(const nlohmann::json& client_data, const std::string& hmac)
+    {
+        const std::string expected_hmac = get_client_data_hmac(client_data);
+        return hmac == expected_hmac;
+    }
+
+    void ga_session::refresh_client_data(locker_t& locker, const std::string& hmac)
+    {
+        GDK_RUNTIME_ASSERT(locker.owns_lock());
+        if (hmac != m_client_data) {
+            {
+                unique_unlock unlocker(locker);
+                const nlohmann::json from_server = get_client_blob_from_server();
+                set_client_data(locker, from_server);
             }
+            notify_client(locker, "client_data", m_client_data);
+        }
+    }
+
+    void ga_session::on_new_client_blob(locker_t& locker, const nlohmann::json& details)
+    {
+        no_std_exception_escape([&] {
+            GDK_RUNTIME_ASSERT(locker.owns_lock());
+            set_client_data(locker, details);
+            notify_client(locker, "client_data", m_client_data);
         });
     }
 
@@ -1288,6 +1427,12 @@ namespace sdk {
             subscribe(locker, "com.greenaddress.txs.wallet_" + receiving_id, [this](const autobahn::wamp_event& event) {
                 locker_t notify_locker(m_mutex);
                 on_new_transaction(notify_locker, get_json_result(event));
+            }));
+
+        subscriptions.emplace_back(
+            subscribe(locker, "com.greenaddress.client_blobs.wallet_" + receiving_id, [this](const autobahn::wamp_event& event) {
+                locker_t notify_locker(m_mutex);
+                on_new_client_blob(notify_locker, get_json_result(event));
             }));
 
         subscriptions.emplace_back(
@@ -1676,6 +1821,28 @@ namespace sdk {
         return get_subaccount(locker, subaccount);
     }
 
+    nlohmann::json ga_session::get_asset_info(locker_t& locker, const std::string& asset)
+    {
+        GDK_RUNTIME_ASSERT(locker.owns_lock());
+
+        // Global assets
+        const auto asset_p = m_assets.find(asset);
+        if (asset_p != m_assets.end()) {
+            return *asset_p;
+        }
+
+        // Local assets
+        const auto local_assets_p = m_client_data.find("local_assets");
+        if (local_assets_p != m_client_data.end()) {
+            const auto asset_p = local_assets_p->find(asset);
+            if (asset_p != local_assets_p->end()) {
+                return *asset_p;
+            }
+        }
+
+        return {};
+    }
+
     nlohmann::json ga_session::get_subaccount_balance_from_server(
         ga_session::locker_t& locker, uint32_t subaccount, uint32_t num_confs)
     {
@@ -1720,14 +1887,17 @@ namespace sdk {
             const int64_t unconfidential_satoshi = accumulate_if(
                 item_utxos, [](auto utxo) { return utxo.find("error") == utxo.end() && !utxo.at("confidential"); });
 
-            if (m_assets.find(key) != m_assets.end()) {
-                balance[key] = convert_amount(locker, { { "satoshi", satoshi }, { "asset_info", m_assets[key] } });
-                balance[key]["unconfidential"] = convert_amount(
-                    locker, { { "satoshi", unconfidential_satoshi }, { "asset_info", m_assets[key] } });
-                balance[key]["asset_info"] = m_assets[key];
-            } else {
-                balance[key] = convert_amount(locker, { { "satoshi", satoshi } });
-                balance[key]["unconfidential"] = convert_amount(locker, { { "satoshi", unconfidential_satoshi } });
+            nlohmann::json balance_json{ { "satoshi", satoshi } };
+            nlohmann::json unconfidential_balance_json{ { "satoshi", unconfidential_satoshi } };
+            const nlohmann::json asset_info = get_asset_info(locker, key);
+            if (!asset_info.is_null()) {
+                balance_json["asset_info"] = asset_info;
+                unconfidential_balance_json["asset_info"] = asset_info;
+            }
+            balance[key] = convert_amount(locker, balance_json);
+            balance[key]["unconfidential"] = convert_amount(locker, unconfidential_balance_json);
+            if (!asset_info.is_null()) {
+                balance[key]["asset_info"] = asset_info;
             }
         }
 
@@ -2684,7 +2854,7 @@ namespace sdk {
         // Note the use of base64 here is to remain binary compatible with
         // old GreenBits installs.
         const auto salt = get_random_bytes<16>();
-        const auto salt_b64 = websocketpp::base64_encode(salt.data(), salt.size());
+        const auto salt_b64 = base64encode(salt.data(), salt.size());
         const auto key = pbkdf2_hmac_sha512_256(ustring_span(password), ustring_span(salt_b64));
 
         // FIXME: secure string

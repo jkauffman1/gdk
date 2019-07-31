@@ -82,6 +82,10 @@ namespace sdk {
     std::string aes_cbc_encrypt(
         const std::array<unsigned char, PBKDF2_HMAC_SHA256_LEN>& key, const std::string& plaintext);
 
+    // Base64
+    std::string base64encode(const unsigned char* data, std::size_t size);
+    std::vector<unsigned char> base64decode(const std::string& base64);
+
     // Scoped unlocker
     struct unique_unlock {
         explicit unique_unlock(std::unique_lock<std::mutex>& locker)

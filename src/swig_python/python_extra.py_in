@@ -229,6 +229,9 @@ class Session(object):
     def change_settings(self, settings):
         return Call(change_settings(self.session_obj, self._to_json(settings)))
 
+    def register_asset_local(self, params):
+        return json.loads(register_asset_local(self.session_obj, self._to_json(params)))
+
     def twofactor_reset(self, email, is_dispute):
         return Call(twofactor_reset(self.session_obj, email, is_dispute))
 

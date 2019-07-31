@@ -71,6 +71,7 @@ namespace sdk {
         nlohmann::json http_get(const nlohmann::json& params);
         nlohmann::json refresh_assets();
         nlohmann::json validate_asset_domain_name(const nlohmann::json& params);
+        nlohmann::json register_asset_local(const nlohmann::json& params);
 
         void register_user(const std::string& mnemonic, bool supports_csv);
         void register_user(const std::string& master_pub_key_hex, const std::string& master_chain_code_hex,
@@ -228,9 +229,11 @@ namespace sdk {
             locker_t& locker, const std::string& topic, const autobahn::wamp_event_handler& callback);
         void call_notification_handler(locker_t& locker, nlohmann::json* details);
 
+        void notify_client(locker_t& locker, const char* event, const nlohmann::json& details);
         void on_new_transaction(locker_t& locker, nlohmann::json details);
         void on_new_block(locker_t& locker, nlohmann::json details);
         void on_new_fees(locker_t& locker, const nlohmann::json& details);
+        void on_new_client_blob(locker_t& locker, const nlohmann::json& details);
         void change_settings_pricing_source(locker_t& locker, const std::string& currency, const std::string& exchange);
 
         nlohmann::json insert_subaccount(locker_t& locker, uint32_t subaccount, const std::string& name,
@@ -242,6 +245,8 @@ namespace sdk {
         nlohmann::json set_fee_estimates(locker_t& locker, const nlohmann::json& fee_estimates);
 
         nlohmann::json refresh_assets(locker_t& locker);
+
+        nlohmann::json get_asset_info(locker_t& locker, const std::string& asset);
 
         nlocktime_t get_upcoming_nlocktime() const;
 
@@ -365,6 +370,21 @@ namespace sdk {
         uint64_t m_earliest_block_time;
 
         nlohmann::json m_assets;
+
+        nlohmann::json m_client_data;
+        void set_client_data(locker_t& locker, const nlohmann::json& meta_blob);
+        nlohmann::json get_client_data() const;
+        void refresh_client_data(locker_t& locker, const std::string& hmac);
+
+        using json_update_fn_t = std::function<void(nlohmann::json&)>;
+        nlohmann::json update_client_data(json_update_fn_t update);
+        void push_client_blob_to_server(const std::string& blob, const std::string& hmac, const std::string& previous_hmac);
+        nlohmann::json get_client_blob_from_server() const;
+
+        std::string encrypt_client_blob(const nlohmann::json& plaintext);
+        nlohmann::json decrypt_client_blob(const std::string& ciphertext);
+        std::string get_client_data_hmac(const nlohmann::json& client_data);
+        bool verify_client_data(const nlohmann::json& client_data, const std::string& hmac);
 
         std::map<uint32_t, nlohmann::json> m_subaccounts; // Includes 0 for main
         std::unique_ptr<ga_pubkeys> m_ga_pubkeys;

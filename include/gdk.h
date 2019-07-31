@@ -137,6 +137,10 @@ GDK_API int GA_refresh_assets(struct GA_session* session, GA_json** output);
  */
 GDK_API int GA_validate_asset_domain_name(struct GA_session* session, const GA_json* params, GA_json** output);
 
+GDK_API int GA_register_asset_local(struct GA_session* session, const GA_json* params, GA_json** output);
+
+/* GDK_API int GA_unregister_asset_local(struct GA_session* session, const GA_json* params, GA_json** output); */
+
 /**
  * Create a new user account using a hardware wallet/HSM/TPM.
  *

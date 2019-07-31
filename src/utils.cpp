@@ -18,6 +18,7 @@
 #include "boost_wrapper.hpp"
 
 #include "assertion.hpp"
+#include "autobahn_wrapper.hpp"
 #include "exception.hpp"
 #include "ga_strings.hpp"
 #include "ga_wally.hpp"
@@ -321,6 +322,17 @@ namespace sdk {
         GDK_RUNTIME_ASSERT(encrypted.size() == plaintext_padded_size);
         encrypted.insert(std::begin(encrypted), iv.begin(), iv.end());
         return b2h(encrypted);
+    }
+
+    std::string base64encode(const unsigned char* data, std::size_t size)
+    {
+        return websocketpp::base64_encode(data, size);
+    }
+
+    std::vector<unsigned char> base64decode(const std::string& base64)
+    {
+        const std::string bytes = websocketpp::base64_decode(base64);
+        return std::vector<unsigned char>(std::begin(bytes), std::end(bytes));
     }
 
     nlohmann::json encrypt_data(const nlohmann::json& input, const std::vector<unsigned char>& default_password)
