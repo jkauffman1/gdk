@@ -1,10 +1,20 @@
 """setuptools config for gdk """
 
 import os
+import subprocess
+import sys
+
+GDK_VERSION = os.environ.get('GDK_VERSION', '0.0.0.0')
+PYTHON_DESTDIR = os.environ.get('PYTHON_DESTDIR', 'gdk-python')
+
+# Hack inspired by https://github.com/pypa/setuptools/issues/1317
+# I wanted to use setup_requires but it doesn't seem to work
+subprocess.call([sys.executable, "-m", "pip", "install", "scikit-build"])
+subprocess.call([sys.executable, "-m", "pip", "install", "meson", "ninja"])
 
 kwargs = {
     'name': 'greenaddress',
-    'version': os.environ['GDK_VERSION'],
+    'version': GDK_VERSION,
     'description': 'gdk Bitcoin library',
     'long_description': 'Python bindings for the gdk Bitcoin library',
     'url': 'https://github.com/blockstream/gdk',
@@ -34,7 +44,7 @@ kwargs = {
     },
 
     'packages': ['greenaddress'],
-    'package_dir': {'': os.environ['PYTHON_DESTDIR']},
+    'package_dir': {'':PYTHON_DESTDIR},
 }
 
 import platform
@@ -44,11 +54,18 @@ import distutils.command.build_py
 class _build_py(distutils.command.build_py.build_py):
 
     def build_libgreenaddress(self):
+        abs_path = os.path.dirname(os.path.abspath(__file__)) + '/'
+
+        def call(cmd):
+            subprocess.check_call(cmd.split(' '), cwd=abs_path)
+
+        call('./tools/build.sh --gcc --python-version {}.{}'.format(sys.version_info.major,
+            sys.version_info.minor))
 
         # Copy the so that has just been built to the build_dir that distutils expects it to be in
         # The extension of the built lib is dylib on osx
         so_ext = 'dylib' if platform.system() == 'Darwin' else 'dll' if platform.system() == 'Windows' else 'so'
-        src_so = 'lib/libgreenaddress.{}'.format(so_ext)
+        src_so = './build-gcc/src/libgreenaddress.{}'.format(so_ext)
         distutils.dir_util.mkpath(self.build_lib)
         dest_so = os.path.join(self.build_lib, 'libgreenaddress.so')
         distutils.file_util.copy_file(src_so, dest_so)
