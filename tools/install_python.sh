@@ -14,7 +14,7 @@ cd $PYTHON_DESTDIR
 
 cp -r ${MESON_BUILD_ROOT}/src/swig_python/greenaddress .
 
-cp ${MESON_SOURCE_ROOT}/src/swig_python/setup.py .
+cd ${MESON_SOURCE_ROOT}
 
 pip install wheel
 
@@ -24,7 +24,7 @@ deactivate
 
 source ${MESON_BUILD_ROOT}/smoketestvenv/bin/activate
 
-pip install --find-links=. greenaddress
+pip install --find-links=$PYTHON_DESTDIR greenaddress
 python -c "import greenaddress; assert len(greenaddress.get_networks()) > 0"
 
 deactivate
