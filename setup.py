@@ -43,7 +43,7 @@ kwargs = {
         'Tracker': 'https://github.com/blockstream/gdk/issues',
     },
 
-    'packages': ['gdk-python/greenaddress'],
+    'packages': ['greenaddress'],
     'package_dir': {'':PYTHON_DESTDIR},
 }
 
