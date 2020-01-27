@@ -71,7 +71,6 @@ class Session(object):
     def __init__(self, net_params):
         self.notifications = queue.Queue()
         self.session_obj = create_session()
-        _python_set_callback_handler(self.session_obj, self._callback_handler)
         return self.connect(net_params)
 
     def destroy(self):

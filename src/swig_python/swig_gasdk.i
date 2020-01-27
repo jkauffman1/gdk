@@ -49,108 +49,6 @@ static int check_result(int result)
     return result;
 }
 
-static int python_string_to_GA_json(PyObject* in, struct GA_json** out)
-{
-    *out = NULL;
-
-#if PY_MAJOR_VERSION >= 3
-    if (!PyUnicode_Check(in)) {
-        PyErr_SetString(PyExc_TypeError, "Expected unicode argument for GA_json");
-        return GA_ERROR;
-    }
-
-    PyObject* utf8_encoded = PyUnicode_AsEncodedString(in, "utf-8", "strict");
-    if (!utf8_encoded) {
-        PyErr_SetString(PyExc_UnicodeEncodeError, "Failed to encode GA_json string as utf-8");
-        return GA_ERROR;
-    }
-
-    const char* utf8_ntbs = PyBytes_AsString(utf8_encoded);
-#else
-    if (!PyString_Check(in)) {
-        PyErr_SetString(PyExc_TypeError, "Expected string argument for GA_json");
-        return GA_ERROR;
-    }
-
-    const char* utf8_ntbs = PyString_AsString(in);
-#endif
-
-    const int result = check_result(GA_convert_string_to_json(utf8_ntbs, out));
-
-#if PY_MAJOR_VERSION >= 3
-    Py_DECREF(utf8_encoded);
-#endif
-
-    return result;
-}
-
-static void notification_handler(void* context_p, const GA_json* details)
-{
-    PyObject* session_capsule = (PyObject*) context_p;
-    PyObject* handler = NULL;
-    char* json_cstring = NULL;
-
-    if (!session_capsule)
-        return;
-
-    if (details) {
-        if (GA_convert_json_to_string(details, &json_cstring) != GA_OK)
-            return;
-        GA_destroy_json((GA_json*) details);
-    }
-
-    SWIG_PYTHON_THREAD_BEGIN_BLOCK;
-    struct GA_session *p = (struct GA_session *)PyCapsule_GetPointer(session_capsule, "struct GA_session *");
-    if (!p)
-        goto end;
-
-    if (!details) {
-        /* Un-registering */
-        GA_set_notification_handler(p, NULL, NULL);
-        goto end;
-    }
-
-    handler = (PyObject *)PyCapsule_GetContext(session_capsule);
-    if (!handler)
-        goto end;
-
-    PyObject *args = Py_BuildValue("(Os)", session_capsule, json_cstring);
-    if (!args)
-        goto end;
-
-    PyEval_CallObject(handler, args);
-    Py_DecRef(args);
-
-end:
-    SWIG_PYTHON_THREAD_END_BLOCK;
-
-    if (json_cstring)
-        GA_destroy_string(json_cstring);
-}
-
-static int _python_set_callback_handler(PyObject* obj, PyObject* arg)
-{
-    struct GA_session *p = (struct GA_session *)PyCapsule_GetPointer(obj, "struct GA_session *");
-    if (!p)
-        return GA_ERROR;
-
-    if (PyCapsule_SetContext(obj, arg))
-        return GA_ERROR;
-
-    Py_IncRef(arg);
-    if (GA_set_notification_handler(p, notification_handler, obj) != GA_OK)
-        return GA_ERROR;
-
-    Py_IncRef(obj);
-    return GA_OK;
-}
-
-#define capsule_dtor(name, fn) static void destroy_##name(PyObject *obj) { \
-    struct name *p = obj == Py_None ? NULL : (struct name *)PyCapsule_GetPointer(obj, "struct " #name " *"); \
-    if (p) fn(p); }
-
-capsule_dtor(GA_session, GA_destroy_session)
-capsule_dtor(GA_auth_handler, GA_destroy_auth_handler)
 %}
 
 %include pybuffer.i
@@ -209,27 +107,12 @@ capsule_dtor(GA_auth_handler, GA_destroy_auth_handler)
    w = 0; $1 = ($1_ltype)&w;
 }
 %typemap (in) const GA_json * {
-    if (python_string_to_GA_json($input, &$1) != GA_OK)
-        SWIG_fail;
 }
 %typemap (in) GA_json * {
-    if (python_string_to_GA_json($input, &$1) != GA_OK)
-        SWIG_fail;
 }
 %typemap (freearg) GA_json * {
-    GA_destroy_json($1);
 }
 %typemap(argout) GA_json ** {
-    if (*$1 != NULL) {
-        Py_DecRef($result);
-        char* str = NULL;
-        if (check_result(GA_convert_json_to_string(*$1, &str)) != GA_OK) {
-            SWIG_fail;
-        }
-        $result = PyString_FromString(str);
-        GA_destroy_string(str);
-        GA_destroy_json(*$1);
-    }
 }
 %typemap(in, numinputs=0) uint32_t * (uint32_t temp) {
    $1 = &temp;
@@ -247,5 +130,3 @@ typedef unsigned int uint32_t;
 %rename("%(regex:/^GA_(.+)/\\1/)s", %$isfunction) "";
 
 %include "../include/gdk.h"
-
-int _python_set_callback_handler(PyObject* obj, PyObject* arg);
