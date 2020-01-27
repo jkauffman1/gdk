@@ -44,7 +44,10 @@ kwargs = {
     },
 
     'packages': ['greenaddress'],
-    'package_dir': {'':PYTHON_DESTDIR},
+    'package_dir': {
+        '':PYTHON_DESTDIR,
+        'greenaddress':'build-gcc/src/swig_python/',
+        },
 }
 
 import platform
