@@ -6,6 +6,7 @@ import sys
 
 GDK_VERSION = os.environ.get('GDK_VERSION', '0.0.0.0')
 PYTHON_DESTDIR = os.environ.get('PYTHON_DESTDIR', 'gdk-python')
+os.environ['PYTHON_DESTDIR'] = PYTHON_DESTDIR
 
 # Hack inspired by https://github.com/pypa/setuptools/issues/1317
 # I wanted to use setup_requires but it doesn't seem to work
@@ -46,7 +47,6 @@ kwargs = {
     'packages': ['greenaddress'],
     'package_dir': {
         '':PYTHON_DESTDIR,
-        'greenaddress':'build-gcc/src/swig_python/',
         },
 }
 
