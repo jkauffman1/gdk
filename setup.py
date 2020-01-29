@@ -45,9 +45,7 @@ kwargs = {
     },
 
     'packages': ['greenaddress'],
-    'package_dir': {
-        '':PYTHON_DESTDIR,
-        },
+    'package_dir': {'':PYTHON_DESTDIR,},
 }
 
 import platform
@@ -72,6 +70,9 @@ class _build_py(distutils.command.build_py.build_py):
         distutils.dir_util.mkpath(self.build_lib)
         dest_so = os.path.join(self.build_lib, 'libgreenaddress.so')
         distutils.file_util.copy_file(src_so, dest_so)
+
+        # Copy greenaddress/__init__.py which is created by build.sh
+        distutils.dir_util.copy_tree('./build-gcc/src/swig_python/greenaddress', './greenaddress')
 
     def run(self):
         # Override build_py to first build the c library, then perform the normal python build.
