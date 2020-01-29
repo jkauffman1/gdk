@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+echo "******* In install_python.sh"
+
 export GDK_VERSION=$1
 export PYTHON_DESTDIR="${DESTDIR}/${MESON_INSTALL_PREFIX}"
 
