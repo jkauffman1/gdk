@@ -72,7 +72,7 @@ class _build_py(distutils.command.build_py.build_py):
         distutils.file_util.copy_file(src_so, dest_so)
 
         # Copy greenaddress/__init__.py which is created by build.sh
-        distutils.dir_util.copy_tree('./build-gcc/src/swig_python/greenaddress', './greenaddress')
+        distutils.dir_util.copy_tree('./build-gcc/src/swig_python/greenaddress', './greenaddress/greenaddress')
 
     def run(self):
         # Override build_py to first build the c library, then perform the normal python build.
